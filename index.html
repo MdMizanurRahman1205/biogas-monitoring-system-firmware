@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<title>Biogas Monitoring System</title>
+
+<!-- ESP WEB TOOLS -->
+<script type="module"
+src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js">
+</script>
+
+<!-- FONT AWESOME -->
+<link rel="stylesheet"
+href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"/>
+
+<!-- GOOGLE FONT -->
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+<style>
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    font-family:'Poppins',sans-serif;
+    background:#07111f;
+    color:white;
+    overflow-x:hidden;
+}
+
+/* ================= BACKGROUND ================= */
+
+body::before{
+    content:'';
+    position:fixed;
+    width:100%;
+    height:100%;
+    background:
+    radial-gradient(circle at top left,#00ffcc33,transparent 30%),
+    radial-gradient(circle at bottom right,#00bfff33,transparent 30%);
+    z-index:-2;
+}
+
+body::after{
+    content:'';
+    position:fixed;
+    width:100%;
+    height:100%;
+    background:url('https://www.transparenttextures.com/patterns/cubes.png');
+    opacity:0.05;
+    z-index:-1;
+}
+
+/* ================= HERO ================= */
+
+.hero{
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:40px;
+}
+
+.container{
+    max-width:1200px;
+    width:100%;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:50px;
+    align-items:center;
+}
+
+@media(max-width:900px){
+    .container{
+        grid-template-columns:1fr;
+        text-align:center;
+    }
+}
+
+/* ================= LEFT ================= */
+
+.badge{
+    display:inline-block;
+    padding:10px 20px;
+    border:1px solid #00ffcc66;
+    border-radius:30px;
+    background:#00ffcc11;
+    color:#00ffcc;
+    margin-bottom:20px;
+    font-size:14px;
+}
+
+.title{
+    font-size:58px;
+    line-height:1.1;
+    font-weight:700;
+    margin-bottom:20px;
+}
+
+.title span{
+    color:#00ffcc;
+    text-shadow:0 0 20px #00ffcc88;
+}
+
+.subtitle{
+    font-size:18px;
+    color:#cbd5e1;
+    line-height:1.8;
+    margin-bottom:35px;
+}
+
+/* ================= BUTTON ================= */
+
+.install-box{
+    display:flex;
+    align-items:center;
+    gap:20px;
+    flex-wrap:wrap;
+}
+
+.install-btn{
+    padding:18px 40px;
+    border:none;
+    border-radius:60px;
+    background:linear-gradient(135deg,#00ffcc,#00bfff);
+    color:#07111f;
+    font-size:18px;
+    font-weight:700;
+    cursor:pointer;
+    transition:0.4s;
+    box-shadow:0 0 25px #00ffcc88;
+}
+
+.install-btn:hover{
+    transform:translateY(-5px) scale(1.05);
+    box-shadow:0 0 40px #00ffcc;
+}
+
+/* ================= SOCIAL ================= */
+
+.socials{
+    margin-top:35px;
+    display:flex;
+    gap:18px;
+    flex-wrap:wrap;
+}
+
+.socials a{
+    width:55px;
+    height:55px;
+    border-radius:50%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    text-decoration:none;
+    color:white;
+    font-size:22px;
+    background:#111827;
+    border:1px solid #00ffcc33;
+    transition:0.4s;
+}
+
+.socials a:hover{
+    transform:translateY(-8px);
+    background:#00ffcc;
+    color:#07111f;
+    box-shadow:0 0 20px #00ffcc;
+}
+
+/* ================= RIGHT SIDE CARD ================= */
+
+.card{
+    background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.1);
+    border-radius:30px;
+    padding:35px;
+    backdrop-filter:blur(20px);
+    box-shadow:0 0 40px rgba(0,255,204,0.15);
+    position:relative;
+    overflow:hidden;
+}
+
+.card::before{
+    content:'';
+    position:absolute;
+    width:250px;
+    height:250px;
+    background:#00ffcc22;
+    border-radius:50%;
+    top:-80px;
+    right:-80px;
+}
+
+/* ================= SENSOR BOX ================= */
+
+.sensor{
+    background:#0f172a;
+    padding:20px;
+    border-radius:20px;
+    margin-bottom:20px;
+    border:1px solid #00ffcc22;
+}
+
+.sensor h3{
+    font-size:15px;
+    color:#94a3b8;
+    margin-bottom:10px;
+}
+
+.sensor-value{
+    font-size:36px;
+    font-weight:700;
+    color:#00ffcc;
+}
+
+/* ================= FEATURES ================= */
+
+.features{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:15px;
+    margin-top:25px;
+}
+
+.feature{
+    background:#111827;
+    padding:15px;
+    border-radius:15px;
+    border:1px solid #00ffcc11;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    transition:0.3s;
+}
+
+.feature:hover{
+    transform:translateY(-4px);
+    border-color:#00ffcc66;
+}
+
+.feature i{
+    color:#00ffcc;
+}
+
+/* ================= FLOATING ANIMATION ================= */
+
+.floating{
+    animation:float 4s ease-in-out infinite;
+}
+
+@keyframes float{
+    0%{
+        transform:translateY(0px);
+    }
+    50%{
+        transform:translateY(-15px);
+    }
+    100%{
+        transform:translateY(0px);
+    }
+}
+
+/* ================= FOOTER ================= */
+
+.footer{
+    text-align:center;
+    padding:30px;
+    color:#94a3b8;
+    border-top:1px solid #ffffff11;
+}
+
+.footer span{
+    color:#00ffcc;
+}
+
+</style>
+</head>
+
+<body>
+
+<section class="hero">
+
+<div class="container">
+
+<!-- LEFT SIDE -->
+<div>
+
+<div class="badge">
+    🚀 ESP32 Powered Smart IoT System
+</div>
+
+<h1 class="title">
+    BIOGAS <span>MONITORING</span><br>
+    SYSTEM
+</h1>
+
+<p class="subtitle">
+    Smart ESP32 based Biogas Tank Monitoring System with
+    WiFi Configuration, Google Sheets Logging,
+    Email Alerts, Temperature Monitoring,
+    and One-Click Firmware Installation.
+</p>
+
+<div class="install-box">
+
+<esp-web-install-button manifest="manifest.json">
+
+<button class="install-btn" slot="activate">
+    <i class="fa-solid fa-microchip"></i>
+    INSTALL FIRMWARE
+</button>
+
+</esp-web-install-button>
+
+</div>
+
+<!-- SOCIAL -->
+<div class="socials">
+
+<a href="https://github.com/" target="_blank">
+<i class="fab fa-github"></i>
+</a>
+
+<a href="https://youtube.com/" target="_blank">
+<i class="fab fa-youtube"></i>
+</a>
+
+<a href="https://instagram.com/" target="_blank">
+<i class="fab fa-instagram"></i>
+</a>
+
+<a href="https://linkedin.com/" target="_blank">
+<i class="fab fa-linkedin"></i>
+</a>
+
+</div>
+
+</div>
+
+<!-- RIGHT SIDE -->
+<div class="card floating">
+
+<div class="sensor">
+<h3>Gas Volume</h3>
+<div class="sensor-value">125 L</div>
+</div>
+
+<div class="sensor">
+<h3>Temperature</h3>
+<div class="sensor-value">32°C</div>
+</div>
+
+<div class="sensor">
+<h3>System Status</h3>
+<div class="sensor-value">FULL</div>
+</div>
+
+<div class="features">
+
+<div class="feature">
+<i class="fa-solid fa-wifi"></i>
+<span>WiFi Portal</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-sheet-plastic"></i>
+<span>Google Sheets</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-envelope"></i>
+<span>Email Alerts</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-temperature-half"></i>
+<span>DS18B20 Sensor</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-cloud-arrow-up"></i>
+<span>OTA Ready</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-mobile-screen"></i>
+<span>Mobile Friendly</span>
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<div class="footer">
+Designed By <span>Md Mizanur Rahman</span> |
+Electronics & Communication Engineer
+</div>
+
+</body>
+</html>
