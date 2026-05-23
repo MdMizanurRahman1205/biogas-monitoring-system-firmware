@@ -1,3 +1,962 @@
+
+
+
+/*
+====================================================
+      BIOGAS MONITORING SYSTEM - ESP32
+      Design By: 
+      Md Mizanur Rahman
+      Electronic and Communication Engineer
+      md.mizanur.rahman.pvt@gmail.com
+====================================================
+
+FEATURES:
+✔ WiFi Configuration Portal
+✔ Save Settings in ESP32 Flash Memory
+✔ Google Sheets Logging
+✔ Email Alerts
+✔ Ultrasonic Gas Measurement
+✔ DS18B20 Temperature Monitoring
+✔ Change Upload Time from Web Portal
+✔ No Need to Re-upload Code Again
+
+====================================================
+LIBRARIES REQUIRED
+====================================================
+
+Install from Arduino Library Manager:
+
+1. WiFiManager by tzapu
+2. OneWire
+3. DallasTemperature
+
+====================================================
+FIRST TIME SETUP
+====================================================
+
+ESP32 creates WiFi:
+
+SSID: BiogasMonitor
+Password: 12345678
+
+Connect using phone/laptop.
+
+Open browser:
+
+192.168.4.1
+
+====================================================
+*/
+
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <WiFiManager.h>
+#include <Preferences.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// ================= PREFERENCES =================
+Preferences preferences;
+
+// ================= SENSOR PINS =================
+#define TRIG_PIN 13
+#define ECHO_PIN 12
+#define ONE_WIRE_BUS 4
+
+// ================= RESET BUTTON =================
+#define RESET_BUTTON 0
+
+// ================= TEMPERATURE SENSOR =================
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+
+// ================= VARIABLES =================
+String googleScriptURL;
+String emails;
+
+float emptyHeight;
+float radius;
+
+// Upload interval in minutes
+float uploadIntervalMinutes;
+
+// Timer delay in milliseconds
+unsigned long timerDelay = 60000;
+
+String status = "NORMAL";
+
+// ================= TIMER =================
+unsigned long lastTime = 0;
+
+// ====================================================
+// LOAD SETTINGS
+// ====================================================
+void loadSettings() {
+
+  preferences.begin("biogas", true);
+
+  googleScriptURL =
+    preferences.getString("script", "");
+
+  emails =
+    preferences.getString("emails", "");
+
+  emptyHeight =
+    preferences.getFloat("height", 24.0);
+
+  radius =
+    preferences.getFloat("radius", 20.0);
+
+  uploadIntervalMinutes =
+    preferences.getFloat("interval",3.0);
+
+  preferences.end();
+}
+
+// ====================================================
+// SAVE SETTINGS
+// ====================================================
+void saveSettings(
+  String script,
+  String emailList,
+  float tankHeight,
+  float tankRadius,
+  float intervalMinutes
+) {
+
+  preferences.begin("biogas", false);
+
+  preferences.putString("script", script);
+  preferences.putString("emails", emailList);
+  preferences.putFloat("height", tankHeight);
+  preferences.putFloat("radius", tankRadius);
+  preferences.putFloat("interval", intervalMinutes);
+
+  preferences.end();
+}
+
+// ====================================================
+// ULTRASONIC FUNCTION
+// ====================================================
+float getDistance() {
+
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration =
+    pulseIn(ECHO_PIN, HIGH, 30000);
+
+  // No echo
+  if(duration == 0) {
+
+    Serial.println("No Echo");
+
+    return emptyHeight;
+  }
+
+  float distance =
+    duration * 0.034 / 2;
+
+  return distance;
+}
+
+// ====================================================
+// CONFIGURATION PORTAL
+// ====================================================
+void setupWiFiManager() {
+
+  WiFiManager wm;
+
+  // Google Script URL
+  WiFiManagerParameter custom_script(
+    "script",
+    "Google Script URL",
+    googleScriptURL.c_str(),
+    200
+  );
+
+  // Emails
+  WiFiManagerParameter custom_email(
+    "emails",
+    "Emails",
+    emails.c_str(),
+    200
+  );
+
+  // Tank Height
+  char heightBuffer[10];
+  dtostrf(emptyHeight, 1, 2, heightBuffer);
+
+  WiFiManagerParameter custom_height(
+    "height",
+    "Empty Height (cm)",
+    heightBuffer,
+    10
+  );
+
+  // Tank Radius
+  char radiusBuffer[10];
+  dtostrf(radius, 1, 2, radiusBuffer);
+
+  WiFiManagerParameter custom_radius(
+    "radius",
+    "Tank Radius (cm)",
+    radiusBuffer,
+    10
+  );
+
+  // Upload Interval
+  char intervalBuffer[10];
+  dtostrf(uploadIntervalMinutes, 1, 2, intervalBuffer);
+
+  WiFiManagerParameter custom_interval(
+    "interval",
+    "Upload Interval (min)",
+    intervalBuffer,
+    10
+  );
+
+  // Add parameters
+  wm.addParameter(&custom_script);
+  wm.addParameter(&custom_email);
+  wm.addParameter(&custom_height);
+  wm.addParameter(&custom_radius);
+  wm.addParameter(&custom_interval);
+
+  // RESET BUTTON
+  pinMode(RESET_BUTTON, INPUT_PULLUP);
+
+  if(digitalRead(RESET_BUTTON) == LOW) {
+
+    Serial.println("Resetting Settings...");
+
+    wm.resetSettings();
+
+    delay(3000);
+
+    ESP.restart();
+  }
+
+  // Connect WiFi
+  bool res = wm.autoConnect(
+    "BiogasMonitor",
+    "12345678"
+  );
+
+  if(!res) {
+
+    Serial.println("WiFi Failed");
+
+    ESP.restart();
+  }
+
+  // Read values
+  googleScriptURL =
+    custom_script.getValue();
+
+  emails =
+    custom_email.getValue();
+
+  emptyHeight =
+    atof(custom_height.getValue());
+
+  radius =
+    atof(custom_radius.getValue());
+
+  uploadIntervalMinutes =
+    atof(custom_interval.getValue());
+
+  // Save settings
+  saveSettings(
+    googleScriptURL,
+    emails,
+    emptyHeight,
+    radius,
+    uploadIntervalMinutes
+  );
+
+  Serial.println("Configuration Saved");
+}
+
+// ====================================================
+// SETUP
+// ====================================================
+void setup() {
+
+  Serial.begin(115200);
+
+  // Ultrasonic
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  // DS18B20
+  sensors.begin();
+
+  // Load old settings
+  loadSettings();
+
+  // Start WiFi Manager
+  setupWiFiManager();
+
+  // Convert minutes to milliseconds
+  timerDelay =
+    uploadIntervalMinutes * 60000;
+
+  Serial.println("==========================");
+  Serial.println("BIOGAS MONITOR STARTED");
+  Serial.println("==========================");
+
+  Serial.println("Google Script:");
+  Serial.println(googleScriptURL);
+
+  Serial.println("Emails:");
+  Serial.println(emails);
+
+  Serial.println("Tank Height:");
+  Serial.println(emptyHeight);
+
+  Serial.println("Tank Radius:");
+  Serial.println(radius);
+
+  Serial.println("Upload Interval:");
+  Serial.print(uploadIntervalMinutes);
+  Serial.println(" Minutes");
+}
+
+// ====================================================
+// LOOP
+// ====================================================
+void loop() {
+
+  if ((millis() - lastTime) > timerDelay) {
+
+    lastTime = millis();
+
+    // ================= DISTANCE =================
+    float distance = getDistance();
+
+    if(distance < emptyHeight)
+      distance = emptyHeight;
+
+    // ================= GAS HEIGHT =================
+    float gasHeight =
+      distance - emptyHeight;
+
+    if(gasHeight < 0)
+      gasHeight = 0;
+
+    // ================= VOLUME =================
+    float volume =
+      3.1416 *
+      radius *
+      radius *
+      gasHeight;
+
+    // Convert cm³ to liters
+    float volumeLiters =
+      volume / 1000.0;
+
+    // ================= TEMPERATURE =================
+    sensors.requestTemperatures();
+
+    float temperature =
+      sensors.getTempCByIndex(0);
+
+    // ================= STATUS =================
+    if(gasHeight <= 2) {
+
+      status = "EMPTY";
+
+    } else if(gasHeight < 18) {
+
+      status = "HALF";
+
+    } else {
+
+      status = "FULL";
+    }
+
+    // ================= SERIAL =================
+    Serial.println("==========================");
+
+    Serial.print("Distance: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+
+    Serial.print("Gas Holder Height: ");
+    Serial.print(gasHeight);
+    Serial.println(" cm");
+
+    Serial.print("Gas Volume: ");
+    Serial.print(volumeLiters);
+    Serial.println(" L");
+
+    Serial.print("Temperature: ");
+    Serial.print(temperature);
+    Serial.println(" C");
+
+    Serial.print("Status: ");
+    Serial.println(status);
+
+    // ================= SEND DATA =================
+    if(WiFi.status() == WL_CONNECTED) {
+
+      HTTPClient http;
+
+      String url =
+        googleScriptURL +
+        "?distance=" + String(distance) +
+        "&height=" + String(gasHeight) +
+        "&volume=" + String(volumeLiters) +
+        "&temperature=" + String(temperature) +
+        "&status=" + status +
+        "&emails=" + emails;
+
+      Serial.println("Sending Data...");
+      Serial.println(url);
+
+      http.begin(url);
+
+      // Follow Google redirect
+      http.setFollowRedirects(
+        HTTPC_STRICT_FOLLOW_REDIRECTS
+      );
+
+      int httpCode = http.GET();
+
+      if(httpCode > 0) {
+
+        String payload =
+          http.getString();
+
+        Serial.println("Server Response:");
+        Serial.println(payload);
+
+      } else {
+
+        Serial.println("HTTP Error:");
+        Serial.println(httpCode);
+      }
+
+      http.end();
+
+    } else {
+
+      Serial.println("WiFi Disconnected");
+    }
+  }
+}.......now i want o convert it into my custome firmware. and i will host the server with my github.. so design attractive webserver with my socail media link and call to action
+
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+
+<esp-web-install-button manifest="manifest.json">
+  <button slot="activate">
+    INSTALL FIRMWARE
+  </button>
+</esp-web-install-button>... make it attractive with more graphics and engaging
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<title>Biogas Monitoring System</title>
+
+<!-- ESP WEB TOOLS -->
+<script type="module"
+src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js">
+</script>
+
+<!-- FONT AWESOME -->
+<link rel="stylesheet"
+href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"/>
+
+<!-- GOOGLE FONT -->
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+<style>
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    font-family:'Poppins',sans-serif;
+    background:#07111f;
+    color:white;
+    overflow-x:hidden;
+}
+
+/* ================= BACKGROUND ================= */
+
+body::before{
+    content:'';
+    position:fixed;
+    width:100%;
+    height:100%;
+    background:
+    radial-gradient(circle at top left,#00ffcc33,transparent 30%),
+    radial-gradient(circle at bottom right,#00bfff33,transparent 30%);
+    z-index:-2;
+}
+
+body::after{
+    content:'';
+    position:fixed;
+    width:100%;
+    height:100%;
+    background:url('https://www.transparenttextures.com/patterns/cubes.png');
+    opacity:0.05;
+    z-index:-1;
+}
+
+/* ================= HERO ================= */
+
+.hero{
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:40px;
+}
+
+.container{
+    max-width:1200px;
+    width:100%;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:50px;
+    align-items:center;
+}
+
+@media(max-width:900px){
+    .container{
+        grid-template-columns:1fr;
+        text-align:center;
+    }
+}
+
+/* ================= LEFT ================= */
+
+.badge{
+    display:inline-block;
+    padding:10px 20px;
+    border:1px solid #00ffcc66;
+    border-radius:30px;
+    background:#00ffcc11;
+    color:#00ffcc;
+    margin-bottom:20px;
+    font-size:14px;
+}
+
+.title{
+    font-size:58px;
+    line-height:1.1;
+    font-weight:700;
+    margin-bottom:20px;
+}
+
+.title span{
+    color:#00ffcc;
+    text-shadow:0 0 20px #00ffcc88;
+}
+
+.subtitle{
+    font-size:18px;
+    color:#cbd5e1;
+    line-height:1.8;
+    margin-bottom:35px;
+}
+
+/* ================= BUTTON ================= */
+
+.install-box{
+    display:flex;
+    align-items:center;
+    gap:20px;
+    flex-wrap:wrap;
+}
+
+.install-btn{
+    padding:18px 40px;
+    border:none;
+    border-radius:60px;
+    background:linear-gradient(135deg,#00ffcc,#00bfff);
+    color:#07111f;
+    font-size:18px;
+    font-weight:700;
+    cursor:pointer;
+    transition:0.4s;
+    box-shadow:0 0 25px #00ffcc88;
+}
+
+.install-btn:hover{
+    transform:translateY(-5px) scale(1.05);
+    box-shadow:0 0 40px #00ffcc;
+}
+
+/* ================= SOCIAL ================= */
+
+.socials{
+    margin-top:35px;
+    display:flex;
+    gap:18px;
+    flex-wrap:wrap;
+}
+
+.socials a{
+    width:55px;
+    height:55px;
+    border-radius:50%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    text-decoration:none;
+    color:white;
+    font-size:22px;
+    background:#111827;
+    border:1px solid #00ffcc33;
+    transition:0.4s;
+}
+
+.socials a:hover{
+    transform:translateY(-8px);
+    background:#00ffcc;
+    color:#07111f;
+    box-shadow:0 0 20px #00ffcc;
+}
+
+/* ================= RIGHT SIDE CARD ================= */
+
+.card{
+    background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.1);
+    border-radius:30px;
+    padding:35px;
+    backdrop-filter:blur(20px);
+    box-shadow:0 0 40px rgba(0,255,204,0.15);
+    position:relative;
+    overflow:hidden;
+}
+
+.card::before{
+    content:'';
+    position:absolute;
+    width:250px;
+    height:250px;
+    background:#00ffcc22;
+    border-radius:50%;
+    top:-80px;
+    right:-80px;
+}
+
+/* ================= SENSOR BOX ================= */
+
+.sensor{
+    background:#0f172a;
+    padding:20px;
+    border-radius:20px;
+    margin-bottom:20px;
+    border:1px solid #00ffcc22;
+}
+
+.sensor h3{
+    font-size:15px;
+    color:#94a3b8;
+    margin-bottom:10px;
+}
+
+.sensor-value{
+    font-size:36px;
+    font-weight:700;
+    color:#00ffcc;
+}
+
+/* ================= FEATURES ================= */
+
+.features{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:15px;
+    margin-top:25px;
+}
+
+.feature{
+    background:#111827;
+    padding:15px;
+    border-radius:15px;
+    border:1px solid #00ffcc11;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    transition:0.3s;
+}
+
+.feature:hover{
+    transform:translateY(-4px);
+    border-color:#00ffcc66;
+}
+
+.feature i{
+    color:#00ffcc;
+}
+
+/* ================= FLOATING ANIMATION ================= */
+
+.floating{
+    animation:float 4s ease-in-out infinite;
+}
+
+@keyframes float{
+    0%{
+        transform:translateY(0px);
+    }
+    50%{
+        transform:translateY(-15px);
+    }
+    100%{
+        transform:translateY(0px);
+    }
+}
+
+/* ================= FOOTER ================= */
+
+.footer{
+    text-align:center;
+    padding:30px;
+    color:#94a3b8;
+    border-top:1px solid #ffffff11;
+}
+
+.footer span{
+    color:#00ffcc;
+}
+
+</style>
+</head>
+
+<body>
+
+<section class="hero">
+
+<div class="container">
+
+<!-- LEFT SIDE -->
+<div>
+
+<div class="badge">
+    🚀 ESP32 Powered Smart IoT System
+</div>
+
+<h1 class="title">
+    BIOGAS <span>MONITORING</span><br>
+    SYSTEM
+</h1>
+
+<p class="subtitle">
+    Smart ESP32 based Biogas Tank Monitoring System with
+    WiFi Configuration, Google Sheets Logging,
+    Email Alerts, Temperature Monitoring,
+    and One-Click Firmware Installation.
+</p>
+
+<div class="install-box">
+
+<esp-web-install-button manifest="manifest.json">
+
+<button class="install-btn" slot="activate">
+    <i class="fa-solid fa-microchip"></i>
+    INSTALL FIRMWARE
+</button>
+
+</esp-web-install-button>
+
+</div>
+
+<!-- SOCIAL -->
+<div class="socials">
+
+<a href="https://github.com/" target="_blank">
+<i class="fab fa-github"></i>
+</a>
+
+<a href="https://youtube.com/" target="_blank">
+<i class="fab fa-youtube"></i>
+</a>
+
+<a href="https://instagram.com/" target="_blank">
+<i class="fab fa-instagram"></i>
+</a>
+
+<a href="https://linkedin.com/" target="_blank">
+<i class="fab fa-linkedin"></i>
+</a>
+
+</div>
+
+</div>
+
+<!-- RIGHT SIDE -->
+<div class="card floating">
+
+<div class="sensor">
+<h3>Gas Volume</h3>
+<div class="sensor-value">125 L</div>
+</div>
+
+<div class="sensor">
+<h3>Temperature</h3>
+<div class="sensor-value">32°C</div>
+</div>
+
+<div class="sensor">
+<h3>System Status</h3>
+<div class="sensor-value">FULL</div>
+</div>
+
+<div class="features">
+
+<div class="feature">
+<i class="fa-solid fa-wifi"></i>
+<span>WiFi Portal</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-sheet-plastic"></i>
+<span>Google Sheets</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-envelope"></i>
+<span>Email Alerts</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-temperature-half"></i>
+<span>DS18B20 Sensor</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-cloud-arrow-up"></i>
+<span>OTA Ready</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-mobile-screen"></i>
+<span>Mobile Friendly</span>
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<div class="footer">
+Designed By <span>Md Mizanur Rahman</span> |
+Electronics & Communication Engineer
+</div>
+
+</body>
+</html>
+
+give descripton for his with my name and design by me
+
+BIOGAS MONITORING SYSTEM
+Smart IoT-Based Biogas Tank Monitoring using ESP32
+
+Designed & Developed By
+Md Mizanur Rahman
+Electronics & Communication Engineer
+
+The Biogas Monitoring System is an advanced ESP32-based IoT solution designed for real-time monitoring of biogas storage tanks. This system helps users monitor gas levels, temperature, and tank status remotely through WiFi connectivity and cloud integration.
+
+The project includes a modern WiFi configuration portal, Google Sheets data logging, email alert system, and smart sensor monitoring using ultrasonic and DS18B20 temperature sensors. Users can configure system settings directly from a web portal without re-uploading firmware.
+
+Key Features:
+✔ Real-Time Biogas Level Monitoring
+✔ ESP32 WiFi Configuration Portal
+✔ Google Sheets Cloud Logging
+✔ Email Notification Alerts
+✔ DS18B20 Temperature Monitoring
+✔ Ultrasonic Gas Level Detection
+✔ Adjustable Upload Interval
+✔ OTA Firmware Ready
+✔ Mobile Friendly Web Interface
+✔ One-Click Firmware Installation
+
+This project is designed for smart agriculture, renewable energy systems, research projects, and industrial biogas monitoring applications.
+
+The firmware and web interface are fully customizable and open for future upgrades including OTA updates, dashboard analytics, and mobile app integration.
+
+Designed with modern IoT technology to make biogas monitoring smarter, easier, and more efficient.
+
+© Md Mizanur Rahman
+Electronics & Communication Engineer
+
+
+<img 
+      class="logo"
+      src="https://yt3.googleusercontent.com/KxOqxC02UXcHU3qBu2n_F6ZoiI4YXJKvuGZhunRZf90rsxCtoM_A85jdlYGwT4KH6jYT8zvCbA=s160-c-k-c0x00ffffff-no-rj"
+      alt="ESP32 Logo">....i want thi image at middle
+
+Use this CSS to place the image perfectly at the center:
+
+<div class="logo-container">
+  <img 
+    class="logo"
+    src="https://yt3.googleusercontent.com/KxOqxC02UXcHU3qBu2n_F6ZoiI4YXJKvuGZhunRZf90rsxCtoM_A85jdlYGwT4KH6jYT8zvCbA=s160-c-k-c0x00ffffff-no-rj"
+    alt="ESP32 Logo">
+</div>
+.logo-container{
+    width:100%;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    margin:30px 0;
+}
+
+.logo{
+    width:140px;
+    height:140px;
+    border-radius:50%;
+    object-fit:cover;
+
+    border:4px solid #00ffcc;
+
+    box-shadow:
+    0 0 20px #00ffcc,
+    0 0 40px #00ffcc66;
+
+    transition:0.4s;
+}
+
+.logo:hover{
+    transform:scale(1.08) rotate(3deg);
+}
+This will:
+
+Center the image horizontally
+
+Add glowing neon effect
+
+Make it circular
+
+Add hover animation
+
+Give professional IoT/product website feel
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -410,4 +1369,649 @@ Electronics & Communication Engineer
 </div>
 
 </body>
+</html>.....eddit here
+
+Replace your current logo section with this:
+
+<!-- LOGO -->
+<div class="logo-container">
+
+<img 
+class="logo"
+src="https://yt3.googleusercontent.com/KxOqxC02UXcHU3qBu2n_F6ZoiI4YXJKvuGZhunRZf90rsxCtoM_A85jdlYGwT4KH6jYT8zvCbA=s160-c-k-c0x00ffffff-no-rj"
+alt="Electro Surgeon Logo">
+
+</div>
+Then add this CSS BELOW your body{} CSS:
+
+/* ================= LOGO ================= */
+
+.logo-container{
+    width:100%;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    margin-bottom:30px;
+}
+
+.logo{
+    width:160px;
+    height:160px;
+    object-fit:cover;
+
+    border-radius:50%;
+
+    border:4px solid #00ffcc;
+
+    box-shadow:
+    0 0 20px #00ffcc,
+    0 0 40px #00ffcc88,
+    0 0 60px #00ffcc55;
+
+    transition:0.5s;
+
+    animation:glow 3s infinite alternate;
+}
+
+.logo:hover{
+    transform:scale(1.08) rotate(5deg);
+}
+
+@keyframes glow{
+
+    0%{
+        box-shadow:
+        0 0 20px #00ffcc,
+        0 0 40px #00ffcc55;
+    }
+
+    100%{
+        box-shadow:
+        0 0 35px #00ffcc,
+        0 0 70px #00ffcc,
+        0 0 100px #00ffcc88;
+    }
+}
+Also replace your subtitle with this more professional version:
+
+<p class="subtitle">
+Smart ESP32-based Biogas Monitoring System designed and developed by 
+<b style="color:#00ffcc;">Md Mizanur Rahman</b>, 
+Electronics & Communication Engineer. 
+Monitor gas level, temperature, and tank status in real-time with 
+WiFi configuration, Google Sheets logging, email alerts, 
+and one-click firmware installation.
+</p>
+
+give full code
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+<title>Biogas Monitoring System</title>
+
+<!-- ESP WEB TOOLS -->
+<script type="module"
+src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js">
+</script>
+
+<!-- FONT AWESOME -->
+<link rel="stylesheet"
+href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"/>
+
+<!-- GOOGLE FONT -->
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+<style>
+
+/* ================= GLOBAL ================= */
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
+
+body{
+    font-family:'Poppins',sans-serif;
+    background:#07111f;
+    color:white;
+    overflow-x:hidden;
+}
+
+/* ================= BACKGROUND ================= */
+
+body::before{
+    content:'';
+    position:fixed;
+    width:100%;
+    height:100%;
+    background:
+    radial-gradient(circle at top left,#00ffcc33,transparent 30%),
+    radial-gradient(circle at bottom right,#00bfff33,transparent 30%);
+    z-index:-2;
+}
+
+body::after{
+    content:'';
+    position:fixed;
+    width:100%;
+    height:100%;
+    background:url('https://www.transparenttextures.com/patterns/cubes.png');
+    opacity:0.05;
+    z-index:-1;
+}
+
+/* ================= HERO ================= */
+
+.hero{
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:40px;
+}
+
+.container{
+    max-width:1200px;
+    width:100%;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:50px;
+    align-items:center;
+}
+
+@media(max-width:900px){
+
+    .container{
+        grid-template-columns:1fr;
+        text-align:center;
+    }
+
+    .install-box{
+        justify-content:center;
+    }
+
+    .socials{
+        justify-content:center;
+    }
+
+}
+
+/* ================= LOGO ================= */
+
+.logo-container{
+    width:100%;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    margin-bottom:30px;
+}
+
+.logo{
+    width:170px;
+    height:170px;
+    object-fit:cover;
+    border-radius:50%;
+    border:4px solid #00ffcc;
+
+    box-shadow:
+    0 0 20px #00ffcc,
+    0 0 40px #00ffcc88,
+    0 0 60px #00ffcc55;
+
+    transition:0.5s;
+
+    animation:glow 3s infinite alternate;
+}
+
+.logo:hover{
+    transform:scale(1.08) rotate(5deg);
+}
+
+@keyframes glow{
+
+    0%{
+        box-shadow:
+        0 0 20px #00ffcc,
+        0 0 40px #00ffcc55;
+    }
+
+    100%{
+        box-shadow:
+        0 0 35px #00ffcc,
+        0 0 70px #00ffcc,
+        0 0 100px #00ffcc88;
+    }
+}
+
+/* ================= BADGE ================= */
+
+.badge{
+    display:inline-block;
+    padding:10px 20px;
+    border:1px solid #00ffcc66;
+    border-radius:30px;
+    background:#00ffcc11;
+    color:#00ffcc;
+    margin-bottom:20px;
+    font-size:14px;
+}
+
+/* ================= TITLE ================= */
+
+.title{
+    font-size:58px;
+    line-height:1.1;
+    font-weight:700;
+    margin-bottom:20px;
+}
+
+.title span{
+    color:#00ffcc;
+    text-shadow:0 0 20px #00ffcc88;
+}
+
+/* ================= SUBTITLE ================= */
+
+.subtitle{
+    font-size:18px;
+    color:#cbd5e1;
+    line-height:1.8;
+    margin-bottom:35px;
+}
+
+/* ================= BUTTON ================= */
+
+.install-box{
+    display:flex;
+    align-items:center;
+    gap:20px;
+    flex-wrap:wrap;
+}
+
+.install-btn{
+    padding:18px 40px;
+    border:none;
+    border-radius:60px;
+
+    background:
+    linear-gradient(135deg,#00ffcc,#00bfff);
+
+    color:#07111f;
+
+    font-size:18px;
+    font-weight:700;
+
+    cursor:pointer;
+
+    transition:0.4s;
+
+    box-shadow:0 0 25px #00ffcc88;
+}
+
+.install-btn:hover{
+    transform:translateY(-5px) scale(1.05);
+
+    box-shadow:
+    0 0 40px #00ffcc;
+}
+
+/* ================= SOCIAL ================= */
+
+.socials{
+    margin-top:35px;
+    display:flex;
+    gap:18px;
+    flex-wrap:wrap;
+}
+
+.socials a{
+    width:55px;
+    height:55px;
+
+    border-radius:50%;
+
+    display:flex;
+    align-items:center;
+    justify-content:center;
+
+    text-decoration:none;
+
+    color:white;
+
+    font-size:22px;
+
+    background:#111827;
+
+    border:1px solid #00ffcc33;
+
+    transition:0.4s;
+}
+
+.socials a:hover{
+    transform:translateY(-8px);
+
+    background:#00ffcc;
+
+    color:#07111f;
+
+    box-shadow:
+    0 0 20px #00ffcc;
+}
+
+/* ================= RIGHT CARD ================= */
+
+.card{
+    background:rgba(255,255,255,0.05);
+
+    border:1px solid rgba(255,255,255,0.1);
+
+    border-radius:30px;
+
+    padding:35px;
+
+    backdrop-filter:blur(20px);
+
+    box-shadow:
+    0 0 40px rgba(0,255,204,0.15);
+
+    position:relative;
+
+    overflow:hidden;
+}
+
+.card::before{
+    content:'';
+
+    position:absolute;
+
+    width:250px;
+    height:250px;
+
+    background:#00ffcc22;
+
+    border-radius:50%;
+
+    top:-80px;
+    right:-80px;
+}
+
+/* ================= SENSOR ================= */
+
+.sensor{
+    background:#0f172a;
+
+    padding:20px;
+
+    border-radius:20px;
+
+    margin-bottom:20px;
+
+    border:1px solid #00ffcc22;
+}
+
+.sensor h3{
+    font-size:15px;
+
+    color:#94a3b8;
+
+    margin-bottom:10px;
+}
+
+.sensor-value{
+    font-size:36px;
+
+    font-weight:700;
+
+    color:#00ffcc;
+}
+
+/* ================= FEATURES ================= */
+
+.features{
+    display:grid;
+
+    grid-template-columns:1fr 1fr;
+
+    gap:15px;
+
+    margin-top:25px;
+}
+
+.feature{
+    background:#111827;
+
+    padding:15px;
+
+    border-radius:15px;
+
+    border:1px solid #00ffcc11;
+
+    display:flex;
+
+    align-items:center;
+
+    gap:10px;
+
+    transition:0.3s;
+}
+
+.feature:hover{
+    transform:translateY(-4px);
+
+    border-color:#00ffcc66;
+}
+
+.feature i{
+    color:#00ffcc;
+}
+
+/* ================= FLOATING ================= */
+
+.floating{
+    animation:float 4s ease-in-out infinite;
+}
+
+@keyframes float{
+
+    0%{
+        transform:translateY(0px);
+    }
+
+    50%{
+        transform:translateY(-15px);
+    }
+
+    100%{
+        transform:translateY(0px);
+    }
+}
+
+/* ================= FOOTER ================= */
+
+.footer{
+    text-align:center;
+
+    padding:30px;
+
+    color:#94a3b8;
+
+    border-top:1px solid #ffffff11;
+}
+
+.footer span{
+    color:#00ffcc;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<section class="hero">
+
+<div class="container">
+
+<!-- LEFT SIDE -->
+<div>
+
+<!-- LOGO -->
+<div class="logo-container">
+
+<img 
+class="logo"
+src="https://yt3.googleusercontent.com/KxOqxC02UXcHU3qBu2n_F6ZoiI4YXJKvuGZhunRZf90rsxCtoM_A85jdlYGwT4KH6jYT8zvCbA=s160-c-k-c0x00ffffff-no-rj"
+alt="Electro Surgeon Logo">
+
+</div>
+
+<div class="badge">
+🚀 ESP32 Powered Smart IoT System
+</div>
+
+<h1 class="title">
+BIOGAS <span>MONITORING</span><br>
+SYSTEM
+</h1>
+
+<p class="subtitle">
+
+Smart ESP32-based Biogas Monitoring System designed and developed by 
+<b style="color:#00ffcc;">Md Mizanur Rahman</b>, 
+Electronics & Communication Engineer.
+
+Monitor gas level, temperature, and tank status in real-time with 
+WiFi configuration, Google Sheets logging, email alerts, 
+and one-click firmware installation.
+
+</p>
+
+<div class="install-box">
+
+<esp-web-install-button manifest="manifest.json">
+
+<button class="install-btn" slot="activate">
+
+<i class="fa-solid fa-microchip"></i>
+INSTALL FIRMWARE
+
+</button>
+
+</esp-web-install-button>
+
+</div>
+
+<!-- SOCIAL -->
+<div class="socials">
+
+<a href="https://github.com/MdMizanurRahman1205/" target="_blank">
+<i class="fab fa-github"></i>
+</a>
+
+<a href="https://youtube.com/@electrosurgeon" target="_blank">
+<i class="fab fa-youtube"></i>
+</a>
+
+<a href="https://instagram.com/electro_surgeon" target="_blank">
+<i class="fab fa-instagram"></i>
+</a>
+
+<a href="https://linkedin.com/in/md-mizanur-rahman-0990bb322" target="_blank">
+<i class="fab fa-linkedin"></i>
+</a>
+
+</div>
+
+</div>
+
+<!-- RIGHT SIDE -->
+<div class="card floating">
+
+<div class="sensor">
+
+<h3>Gas Volume</h3>
+
+<div class="sensor-value">
+125 L
+</div>
+
+</div>
+
+<div class="sensor">
+
+<h3>Temperature</h3>
+
+<div class="sensor-value">
+32°C
+</div>
+
+</div>
+
+<div class="sensor">
+
+<h3>System Status</h3>
+
+<div class="sensor-value">
+FULL
+</div>
+
+</div>
+
+<div class="features">
+
+<div class="feature">
+<i class="fa-solid fa-wifi"></i>
+<span>WiFi Portal</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-sheet-plastic"></i>
+<span>Google Sheets</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-envelope"></i>
+<span>Email Alerts</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-temperature-half"></i>
+<span>DS18B20 Sensor</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-cloud-arrow-up"></i>
+<span>OTA Ready</span>
+</div>
+
+<div class="feature">
+<i class="fa-solid fa-mobile-screen"></i>
+<span>Mobile Friendly</span>
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<div class="footer">
+
+Designed By 
+<span>Md Mizanur Rahman</span> |
+Electronics & Communication Engineer
+
+</div>
+
+</body>
 </html>
+
