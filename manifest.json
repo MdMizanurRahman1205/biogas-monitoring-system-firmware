@@ -6,15 +6,15 @@
       "chipFamily": "ESP32",
       "parts": [
         {
-          "path": "BIOGAS_monitoring_system_V2.ino.bootloader.bin",
+          "path": "BIOGAS_monitoring_system_V3.ino.bootloader.bin",
           "offset": 4096
         },
         {
-          "path": "BIOGAS_monitoring_system_V2.ino.partitions.bin",
+          "path": "BIOGAS_monitoring_system_V3.ino.partitions.bin",
           "offset": 32768
         },
         {
-          "path": "BIOGAS_monitoring_system_V2.ino.bin",
+          "path": "BIOGAS_monitoring_system_V3.ino.bin",
           "offset": 65536
         }
       ]
